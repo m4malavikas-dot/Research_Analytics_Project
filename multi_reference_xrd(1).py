@@ -1,4 +1,4 @@
-import re
+git --versionimport re
 from pathlib import Path
 
 import pandas as pd
@@ -445,60 +445,6 @@ if sample_type == "Sn-CuS":
 
         print("\nHIGHEST POINT BETWEEN 20° AND 23°")
         print(highest_sn_region_point)
-
-
-# ============================================================
-# 6. DETECT EXPERIMENTAL PEAKS
-# ============================================================
-
-from scipy.signal import find_peaks, savgol_filter
-
-# Smooth the experimental intensity data
-smoothed_y = savgol_filter(
-    y,
-    window_length=11,
-    polyorder=3
-)
-
-peak_indices, peak_properties = find_peaks(
-    smoothed_y,
-    distance=peak_distance,
-    prominence=peak_prominence,
-    width=3
-)
-
-detected_peaks = raw_df.iloc[peak_indices][
-    ["X", "d (Å)", "Y (counts)"]
-].copy()
-
-detected_peaks = detected_peaks.rename(columns={
-    "X": "Detected_2theta",
-    "d (Å)": "Detected_d",
-    "Y (counts)": "Experimental_Intensity"
-})
-
-detected_peaks = detected_peaks.reset_index(drop=True)
-
-detected_peaks.insert(
-    0,
-    "Peak_ID",
-    range(1, len(detected_peaks) + 1)
-)
-
-# Add prominence returned by scipy
-detected_peaks["Prominence"] = peak_properties["prominences"]
-
-# Normalise experimental intensity
-maximum_experimental_intensity = (
-    detected_peaks["Experimental_Intensity"].max()
-)
-
-detected_peaks["Experimental_Relative_Intensity"] = (
-    detected_peaks["Experimental_Intensity"]
-    / maximum_experimental_intensity
-    * 100
-)
-
 
 
 # ============================================================
