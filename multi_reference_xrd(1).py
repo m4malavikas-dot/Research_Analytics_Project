@@ -1,4 +1,4 @@
-git --versionimport re
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -76,17 +76,21 @@ reference_phases = {
 # 3. SETTINGS
 # ============================================================
 
-# Peak detection settings for experimental XRD data
-peak_distance = 30
-peak_prominence = 100
+# Physical minimum separation between distinct peaks in degrees 2-theta
+# (typical nanocrystalline XRD peak widths are ~0.15° to 0.25°)
+min_peak_distance_deg = 0.15
+
+# Minimum signal-to-noise ratio: peak prominence must be >= 3 * sigma_noise
+min_snr = 3.0
+
+# Minimum relative prominence as a percentage of the highest peak (1% to 2%)
+min_relative_prominence = 1.5
 
 # Maximum allowed difference between experimental and reference 2θ
 tolerance = 0.3
 
-# Ignore extremely weak reference peaks below this percentage.
-# Reference intensities will first be normalised to a maximum of 100.
+# Ignore extremely weak reference peaks below this percentage
 minimum_reference_relative_intensity = 5.0
-
 
 # ============================================================
 # 4. HELPER FUNCTIONS
@@ -379,9 +383,7 @@ selected_reference_phases = select_reference_phases(
 
 print(f"\nSample type detected automatically: {sample_type}")
 
-
 print("\nREFERENCE PHASES THAT WILL BE USED")
-
 for card_number, phase_information in selected_reference_phases.items():
     print(
         f"{card_number}: "
@@ -389,17 +391,13 @@ for card_number, phase_information in selected_reference_phases.items():
         f"({phase_information['Formula']})"
     )
 
-
 # Create the output filename automatically
 safe_sample_type = sample_type.replace("-", "_")
-
 output_file_name = (
     f"{raw_file_path.stem}_"
     f"{safe_sample_type}_XRD_Analysis.xlsx"
 )
-
 output_file_path = output_folder / output_file_name
-
 
 if not raw_file_path.exists():
     raise FileNotFoundError(
@@ -409,12 +407,10 @@ if not raw_file_path.exists():
 raw_df = pd.read_excel(raw_file_path)
 
 required_columns = ["X", "d (Å)", "Y (counts)"]
-
 missing_columns = [
-    column for column in required_columns
-    if column not in raw_df.columns
+    col for col in required_columns
+    if col not in raw_df.columns
 ]
-
 if missing_columns:
     raise ValueError(
         f"Missing columns in the experimental file: {missing_columns}"
@@ -423,47 +419,65 @@ if missing_columns:
 # Remove rows containing missing values in essential columns
 raw_df = raw_df.dropna(subset=required_columns).copy()
 
-x = raw_df["X"]
-y = raw_df["Y (counts)"]
-
-
-# Check experimental data around the expected Sn2S3 peak
-if sample_type == "Sn-CuS":
-
-    sn_region = raw_df[
-        (raw_df["X"] >= 20.0)
-        & (raw_df["X"] <= 23.0)
-    ]
-
-    print("\nRAW DATA BETWEEN 20° AND 23°")
-    print(sn_region)
-
-    if not sn_region.empty:
-        highest_sn_region_point = sn_region.loc[
-            sn_region["Y (counts)"].idxmax()
-        ]
-
-        print("\nHIGHEST POINT BETWEEN 20° AND 23°")
-        print(highest_sn_region_point)
+x = raw_df["X"].to_numpy()
+y = raw_df["Y (counts)"].to_numpy()
 
 
 # ============================================================
-# 6. DETECT EXPERIMENTAL PEAKS
+# 6. DETECT EXPERIMENTAL PEAKS (IUPAC 5σ LOQ + BASELINE-AWARE)
 # ============================================================
 
+import numpy as np
 from scipy.signal import find_peaks, savgol_filter
+from scipy.ndimage import uniform_filter1d
 
-# Smooth the experimental intensity data
-smoothed_y = savgol_filter(
-    y,
-    window_length=11,
-    polyorder=3
-)
+# 1. Determine instrument step size (Δ2θ)
+step_size = float(np.median(np.diff(x)))
 
+# 2. Derive point distance from instrumental resolution floor (0.15°)
+# Ensures the distance setting works on scans with any step size
+dynamic_distance = max(1, int(round(0.15 / step_size)))
+
+# 3. Savitzky-Golay filter to suppress high-frequency detector noise
+# Uses ~0.25° window (~13 points for 0.02° step), polyorder 3
+sg_window = int(round(0.25 / step_size))
+if sg_window % 2 == 0:
+    sg_window += 1
+sg_window = max(7, sg_window)
+
+smoothed_y = savgol_filter(y, window_length=sg_window, polyorder=3)
+
+# 4. Background baseline estimation (rolling window ~2.5° wide)
+# Subtracting this baseline removes glass/amorphous substrate humps <25°
+baseline_pts = max(15, int(round(2.5 / step_size)))
+baseline = uniform_filter1d(smoothed_y, size=baseline_pts, mode="nearest")
+net_intensity = np.maximum(0.0, smoothed_y - baseline)
+
+# 5. Measure instrument noise floor (σ_noise) from high-frequency residuals
+noise_residuals = y - smoothed_y
+sigma_noise = float(np.std(noise_residuals))
+
+# 6. Prominence threshold: IUPAC 5σ Limit of Quantitation (LOQ)
+# Evaluates against net prominence so baseline curvature doesn't trigger peaks
+prominence_cutoff = 5.0 * sigma_noise
+
+# Optional floor: at least 2.5% of the strongest net reflection
+max_net_signal = float(np.max(net_intensity))
+relative_floor = 0.025 * max_net_signal
+dynamic_prominence = max(prominence_cutoff, relative_floor)
+
+print(f"\n[Peak Detection Dynamics]")
+print(f"  - Step size: {step_size:.4f}° 2θ")
+print(f"  - Calculated point distance: {dynamic_distance} points (0.15°)")
+print(f"  - Noise floor (σ): {sigma_noise:.2f} counts")
+print(f"  - IUPAC 5σ LOQ threshold: {prominence_cutoff:.2f} counts")
+print(f"  - Effective prominence cutoff: {dynamic_prominence:.2f} counts")
+
+# 7. Identify peaks on the smoothed curve using net prominence
 peak_indices, peak_properties = find_peaks(
     smoothed_y,
-    distance=peak_distance,
-    prominence=peak_prominence,
+    distance=dynamic_distance,
+    prominence=dynamic_prominence,
     width=3
 )
 
@@ -478,26 +492,18 @@ detected_peaks = detected_peaks.rename(columns={
 })
 
 detected_peaks = detected_peaks.reset_index(drop=True)
-
-detected_peaks.insert(
-    0,
-    "Peak_ID",
-    range(1, len(detected_peaks) + 1)
-)
-
-# Add prominence returned by scipy
+detected_peaks.insert(0, "Peak_ID", range(1, len(detected_peaks) + 1))
 detected_peaks["Prominence"] = peak_properties["prominences"]
 
-# Normalise experimental intensity
-maximum_experimental_intensity = (
-    detected_peaks["Experimental_Intensity"].max()
-)
-
+# Normalize relative intensity (Base 100 on strongest detected reflection)
+max_peak_intensity = detected_peaks["Experimental_Intensity"].max()
 detected_peaks["Experimental_Relative_Intensity"] = (
     detected_peaks["Experimental_Intensity"]
-    / maximum_experimental_intensity
-    * 100
+    / max_peak_intensity
+    * 100.0
 )
+
+print(f"  - Total true peaks detected: {len(detected_peaks)}")
 
 
 # ============================================================
@@ -677,20 +683,46 @@ unmatched_peaks_df = pd.DataFrame(unmatched_peaks)
 
 
 # ============================================================
-# 10. SELECT THE CLOSEST MATCH FOR EACH EXPERIMENTAL PEAK
+# 10. HIERARCHICAL PHASE-FIRST MATCHING
 # ============================================================
 
 if not all_matches_df.empty:
 
+    # 1. Define Phase Priority Hierarchy
+    # Host matrix (Covellite CuS) takes precedence over sub-stoichiometric
+    # or dopant phases when both match within tolerance.
+    phase_priority = {
+        "000752233": 1,  # CuS (Primary Host Matrix)
+        "000752183": 2,  # Sn2S3 (Primary Secondary/Dopant Phase)
+        "000360380": 3,  # Cu39S28 (Spionkopite sub-phase)
+        "000711383": 4,  # Cu1.9375S (Djurleite sub-phase)
+        "000822117": 5,  # CuCl (Precursor residue)
+        "000890474": 6,  # SnCl2 (Precursor residue)
+    }
+
+    # Map priority rank (default to 99 if a card isn't explicitly listed)
+    all_matches_df["Phase_Priority"] = (
+        all_matches_df["Reference_Card"]
+        .map(phase_priority)
+        .fillna(99)
+        .astype(int)
+    )
+
+    # 2. Sort by:
+    #    a) Peak_ID
+    #    b) Phase_Priority (Host CuS tested first)
+    #    c) Difference (Smallest delta within the same phase)
+    #    d) Reference_Relative_Intensity (Strongest reference peak)
     best_matches_df = (
         all_matches_df
         .sort_values(
             by=[
                 "Peak_ID",
+                "Phase_Priority",
                 "Difference",
                 "Reference_Relative_Intensity"
             ],
-            ascending=[True, True, False]
+            ascending=[True, True, True, False]
         )
         .drop_duplicates(
             subset=["Peak_ID"],
@@ -701,7 +733,6 @@ if not all_matches_df.empty:
 
 else:
     best_matches_df = pd.DataFrame()
-
 
 # ============================================================
 # 11. CREATE PHASE SUMMARY
