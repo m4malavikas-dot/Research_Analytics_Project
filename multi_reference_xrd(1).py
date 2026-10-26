@@ -856,18 +856,22 @@ reference_file_status_df = pd.DataFrame(reference_file_status)
 # ============================================================
 
 print("\nDETECTED EXPERIMENTAL PEAKS")
-print(detected_peaks)
-
-print("\nPHASE SUMMARY")
-print(phase_summary)
+print(detected_peaks.to_string(index=False))
 
 print("\nBEST MATCH FOR EACH EXPERIMENTAL PEAK")
-print(best_matches_df)
+if not best_matches_df.empty:
+    # Select key columns so you can instantly see which phase it matched with
+    display_cols = [
+        "Peak_ID", "Detected_2theta", "Phase", "Formula", 
+        "Reference_2theta", "Difference", "HKL"
+    ]
+    print(best_matches_df[display_cols].to_string(index=False))
+else:
+    print("No matches recorded.")
 
 if not unmatched_peaks_df.empty:
     print("\nUNMATCHED EXPERIMENTAL PEAKS")
-    print(unmatched_peaks_df)
-
+    print(unmatched_peaks_df.to_string(index=False))
 
 # ============================================================
 # 14. SAVE RESULTS TO EXCEL
