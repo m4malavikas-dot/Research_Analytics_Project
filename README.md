@@ -27,7 +27,7 @@ Manual XRD peak indexing and phase matching across multi-phase and doped chalcog
 * **Host-Matrix Priority:** Ranks candidate matches within a $\pm 0.3^\circ\ 2\theta$ tolerance window using a hierarchical phase-first model:
   1. Primary Host Matrix: **$\text{CuS}$ (Covellite)**
   2. Secondary Dopant Phase: **$\text{Sn}_2\text{S}_3$**
-  3. Sub-stoichiometric Copper Sulfides: **$\text{Cu}_{39}\text{S}_{28}$ (Spionkopite)**, **$\text{Cu}_{1.9375}\text{S}$ (Djurleite)**
+  3. Sub-stoichiometric Copper Sulfides: **Cu<sub>39</sub>S<sub>28</sub> (Spionkopite)**, **$\text{Cu}_{1.9375}\text{S}$ (Djurleite)**
   4. Precursor Residuals: **$\text{CuCl}$**, **$\text{SnCl}_2$**
 
 ---
